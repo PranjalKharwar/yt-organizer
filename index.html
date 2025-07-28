@@ -80,6 +80,34 @@ const GH_USER = "PranjalKharwar";
 const GH_REPO = "yt-organizer";
 const GH_BRANCH = "main";
 const GH_FILE = "library.json";
+  /* ── THEME TOGGLE (DOMContentLoaded) ── */
+document.addEventListener("DOMContentLoaded", () => {
+  const themeBtn = document.getElementById("themeToggle");
+
+  const setIcon = () =>
+    (themeBtn.textContent =
+      document.documentElement.dataset.theme === "dark" ? "☀" : "☾");
+
+  /* restore previous choice */
+  if (localStorage.getItem("ytTheme") === "dark") {
+    document.documentElement.dataset.theme = "dark";
+  }
+  setIcon();
+
+  themeBtn.onclick = () => {
+    /* flip attribute on <html> */
+    document.documentElement.dataset.theme =
+      document.documentElement.dataset.theme === "dark" ? "" : "dark";
+
+    setIcon();
+
+    /* remember choice */
+    document.documentElement.dataset.theme === "dark"
+      ? localStorage.setItem("ytTheme", "dark")
+      : localStorage.removeItem("ytTheme");
+  };
+});
+
 
 /* ── Token ── */
 let GH_TOKEN = localStorage.getItem("ytToken") || "";
