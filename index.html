@@ -1,4 +1,4 @@
-<script>
+f<script>
 /*════════════ CONFIG – edit only these two lines ════════════*/
 const GH_USER = "PranjalKharwar";   // ← your GitHub username
 const GH_REPO = "yt-organizer";     // ← repo name
@@ -82,7 +82,8 @@ const pushLater = debounce(pushRemote, 2000);
 let selectedPath = [],
   filter = "";
 const getNode = (p) => p.reduce((n, i) => n.children[i], { children: data });
-const ytId = (u) => (u.match(/(?:youtu\\.be\\/|v=)([\\w-]{11})/) || [])[1] || null;
+const ytId = u => (u.match(/(?:youtu\.be\/|v=)([\w-]{11})/) || [])[1] || null;
+
 
 /* --- Undo --- */
 const undoStack = [];
