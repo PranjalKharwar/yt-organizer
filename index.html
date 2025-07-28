@@ -1,243 +1,347 @@
 <script>
-/*══════════════════ CONFIG – edit only these two lines ══════════════════*/
-const GH_USER   = 'PranjalKharwar';   // ← your GitHub username
-const GH_REPO   = 'yt-organizer';     // ← repo name
-/*═══════════════════════════════════════════════════════════════════════*/
+/*════════════ CONFIG – edit only these two lines ════════════*/
+const GH_USER = "PranjalKharwar";   // ← your GitHub username
+const GH_REPO = "yt-organizer";     // ← repo name
+/*════════════════════════════════════════════════════════════*/
 
-const GH_BRANCH = 'main';
-const GH_FILE   = 'library.json';
+const GH_BRANCH = "main";
+const GH_FILE   = "library.json";
 
-/* === TOKEN === */
-let GH_TOKEN = localStorage.getItem('ytToken') || '';
+/* ---------- GitHub token (prompt once per browser) ---------- */
+let GH_TOKEN = localStorage.getItem("ytToken") || "";
 async function ensureToken () {
   while (!GH_TOKEN) {
-    const t = prompt('GitHub Personal‑Access Token (contents scope)\n(You paste this once per browser)');
-    if (!t) { alert('No token entered – running in local‑only mode.'); break; }
-    GH_TOKEN = t.trim(); localStorage.setItem('ytToken', GH_TOKEN);
+    const t = prompt(
+      "GitHub Personal‑Access Token with 'repo → contents' scope\n(Paste once; browser keeps it in localStorage)"
+    );
+    if (!t) break;
+    GH_TOKEN = t.trim();
+    localStorage.setItem("ytToken", GH_TOKEN);
   }
 }
 
-/* === LOCAL STORAGE === */
-let data = JSON.parse(localStorage.getItem('ytOrganizer') || '[]');
-const saveLocal = () => localStorage.setItem('ytOrganizer', JSON.stringify(data));
+/* ---------- Local state ---------- */
+let data = JSON.parse(localStorage.getItem("ytOrganizer") || "[]");
+const saveLocal = () =>
+  localStorage.setItem("ytOrganizer", JSON.stringify(data));
 
-/* === REMOTE FETCH / PUSH === */
+/* ---------- Sync helpers ---------- */
 async function fetchRemote () {
   try {
-    const url = `https://raw.githubusercontent.com/${GH_USER}/${GH_REPO}/${GH_BRANCH}/${GH_FILE}`;
-    const res = await fetch(url);
-    if (res.ok) { data = await res.json(); saveLocal(); }
-  } catch (e) { console.warn('Remote fetch failed (first load falls back to local)', e); }
+    const raw = `https://raw.githubusercontent.com/${GH_USER}/${GH_REPO}/${GH_BRANCH}/${GH_FILE}`;
+    const res = await fetch(raw);
+    if (res.ok) {
+      data = await res.json();
+      saveLocal();
+    }
+  } catch (e) {
+    console.warn("remote fetch failed", e);
+  }
 }
 
 async function pushRemote () {
   if (!GH_TOKEN) return;
   const api  = `https://api.github.com/repos/${GH_USER}/${GH_REPO}/contents/${GH_FILE}`;
-  const hdrs = { 'Authorization': `token ${GH_TOKEN}`, 'Accept': 'application/vnd.github.v3+json' };
-
-  // get current SHA – needed by GitHub for updates
-  let sha; try {
-    const g = await fetch(api, { headers: hdrs });
-    if (g.ok) sha = (await g.json()).sha;
-  } catch { /* ignore – file may not exist yet */ }
-
-  const body = {
-    message : 'yt‑organizer auto‑sync',
-    content : btoa(unescape(encodeURIComponent(JSON.stringify(data)))),
-    branch  : GH_BRANCH,
-    ...(sha ? { sha } : {})
+  const hdrs = {
+    Authorization: `token ${GH_TOKEN}`,
+    Accept: "application/vnd.github.v3+json",
   };
 
-  await fetch(api, { method: 'PUT', headers: { ...hdrs, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
-        .catch(e => console.warn('Remote push failed', e));
+  /* get SHA if file exists */
+  let sha;
+  try {
+    const g = await fetch(api, { headers: hdrs });
+    if (g.ok) sha = (await g.json()).sha;
+  } catch { /* ignore */ }
+
+  const body = {
+    message: "yt‑organizer auto‑sync",
+    content: btoa(unescape(encodeURIComponent(JSON.stringify(data)))),
+    branch: GH_BRANCH,
+    ...(sha ? { sha } : {}),
+  };
+
+  await fetch(api, {
+    method: "PUT",
+    headers: { ...hdrs, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch((e) => console.warn("remote push failed", e));
 }
 
-const debounce = (fn, ms) => { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; };
+/* debounce so we don’t hammer GitHub */
+const debounce = (fn, ms) => {
+  let t;
+  return () => {
+    clearTimeout(t);
+    t = setTimeout(fn, ms);
+  };
+};
 const pushLater = debounce(pushRemote, 2000);
 
-/*══════════════════ ORIGINAL APP CODE (unchanged) ══════════════════*/
-/*  Everything from here down is the exact, working logic that       */
-/*  renders the UI and handles add / delete / rename / preview.      */
-/*  The ONLY edits are:                                              */
-/*    1. `save()` was replaced with `saveLocal(); pushLater();`      */
-/*    2. we call ensureToken() + fetchRemote() once at start.        */
+/*════════════ ORIGINAL APP LOGIC (unchanged) ════════════*/
+let selectedPath = [],
+  filter = "";
+const getNode = (p) => p.reduce((n, i) => n.children[i], { children: data });
+const ytId = (u) =>
+  (u.match(/(?:youtu\\.be\\/|v=)([\\w-]{11})/) || [])[1] || null;
 
-let selectedPath = []; let filter = '';
-const getNode = p => p.reduce((n, i) => n.children[i], { children: data });
-const ytId = u => (u.match(/(?:youtu\\.be\\/|v=)([\\w-]{11})/) || [])[1] || null;
-
-/* ---------- UNDO ---------- */
+/* --- Undo --- */
 const undoStack = [];
-const pushUndo = (item, parentPath, idx) => { undoStack.push({ item: structuredClone(item), parentPath: [...parentPath], idx }); updateButtons(); };
+const pushUndo = (item, parentPath, idx) => {
+  undoStack.push({ item: structuredClone(item), parentPath: [...parentPath], idx });
+  updateButtons();
+};
 const undo = () => {
   if (!undoStack.length) return;
-  const u = undoStack.pop();
-  const cont = u.parentPath.length ? getNode(u.parentPath).children : data;
-  cont.splice(u.idx, 0, u.item);
+  const u   = undoStack.pop();
+  const arr = u.parentPath.length ? getNode(u.parentPath).children : data;
+  arr.splice(u.idx, 0, u.item);
   saveLocal(); pushLater(); updateUI();
 };
 
-/* ---------- MOVE ---------- */
-const move = dir => {
+/* --- Move --- */
+const move = (dir) => {
   if (!selectedPath.length) return;
   const parentPath = selectedPath.slice(0, -1);
-  const cont = parentPath.length ? getNode(parentPath).children : data;
+  const arr = parentPath.length ? getNode(parentPath).children : data;
   const idx = selectedPath[selectedPath.length - 1];
-  const newIdx = idx + dir;
-  if (newIdx < 0 || newIdx >= cont.length) return;
-  [cont[idx], cont[newIdx]] = [cont[newIdx], cont[idx]];
-  selectedPath[selectedPath.length - 1] = newIdx;
+  const ni  = idx + dir;
+  if (ni < 0 || ni >= arr.length) return;
+  [arr[idx], arr[ni]] = [arr[ni], arr[idx]];
+  selectedPath[selectedPath.length - 1] = ni;
   saveLocal(); pushLater(); updateUI();
 };
 
-/* ---------- FILTER ---------- */
-const nodeMatches = n => !filter || ((n.name || '').toLowerCase().includes(filter) || (n.children && n.children.some(nodeMatches)));
+/* --- Filter --- */
+const nodeMatches = (n) =>
+  !filter ||
+  (n.name || "").toLowerCase().includes(filter) ||
+  (n.children && n.children.some(nodeMatches));
 
-/* ---------- RENDER TREE ---------- */
-const treeEl = document.getElementById('tree');
+/* --- Render tree --- */
+const treeEl = document.getElementById("tree");
 const renderTree = () => {
-  treeEl.innerHTML = '';
-  if (!data.length) { treeEl.innerHTML = '<p class="placeholder">No folders yet – add one →</p>'; return; }
+  treeEl.innerHTML = "";
+  if (!data.length) {
+    treeEl.innerHTML =
+      '<p class="placeholder">No folders yet – add one →</p>';
+    return;
+  }
   const build = (n, p) => {
     if (!nodeMatches(n)) return;
-    const row = document.createElement('div');
-    row.className = `node ${n.type} ${JSON.stringify(p) === JSON.stringify(selectedPath) ? 'selected' : ''}`;
+    const row = document.createElement("div");
+    row.className = `node ${n.type} ${
+      JSON.stringify(p) === JSON.stringify(selectedPath) ? "selected" : ""
+    }`;
     row.style.marginLeft = `${p.length * 12}px`;
 
-    const arrow = document.createElement('span');
-    arrow.className = 'arrow';
-    if (n.type === 'folder') {
-      arrow.textContent = n.collapsed ? '▸' : '▾';
-      arrow.onclick = e => { e.stopPropagation(); n.collapsed = !n.collapsed; saveLocal(); pushLater(); renderTree(); };
-    } else arrow.classList.add('invisible');
+    const arrow = document.createElement("span");
+    arrow.className = "arrow";
+    if (n.type === "folder") {
+      arrow.textContent = n.collapsed ? "▸" : "▾";
+      arrow.onclick = (e) => {
+        e.stopPropagation();
+        n.collapsed = !n.collapsed;
+        saveLocal(); pushLater(); renderTree();
+      };
+    } else arrow.classList.add("invisible");
     row.appendChild(arrow);
 
-    if (n.type === 'video') {
-      const img = document.createElement('img'); img.className = 'thumb';
-      const id = ytId(n.url); if (id) img.src = `https://img.youtube.com/vi/${id}/mqdefault.jpg`;
+    if (n.type === "video") {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      const id = ytId(n.url);
+      if (id) img.src = `https://img.youtube.com/vi/${id}/mqdefault.jpg`;
       row.appendChild(img);
-    } else row.appendChild(Object.assign(document.createElement('span'), { className: 'thumb-placeholder' }));
+    } else {
+      const ph = document.createElement("span");
+      ph.className = "thumb-placeholder";
+      row.appendChild(ph);
+    }
 
-    const label = document.createElement('span');
-    label.textContent = n.name || 'Video';
-    label.ondblclick = e => {
+    const label = document.createElement("span");
+    label.textContent = n.name || "Video";
+    label.ondblclick = (e) => {
       e.stopPropagation();
-      const nm = prompt('Rename', n.name || '');
-      if (nm !== null) { n.name = nm.trim(); saveLocal(); pushLater(); updateUI(); }
+      const nm = prompt("Rename", n.name || "");
+      if (nm !== null) {
+        n.name = nm.trim();
+        saveLocal(); pushLater(); updateUI();
+      }
     };
     row.appendChild(label);
 
-    row.onclick = e => { e.stopPropagation(); selectedPath = p; updateUI(); };
-    treeEl.appendChild(row);
+    row.onclick = (e) => {
+      e.stopPropagation();
+      selectedPath = p;
+      updateUI();
+    };
 
-    if (n.type === 'folder' && !n.collapsed) (n.children || []).forEach((c, i) => build(c, p.concat(i)));
+    treeEl.appendChild(row);
+    if (n.type === "folder" && !n.collapsed)
+      (n.children || []).forEach((c, i) => build(c, p.concat(i)));
   };
   data.forEach((n, i) => build(n, [i]));
 };
 
-/* ---------- BREADCRUMB ---------- */
-const crumb = document.getElementById('breadcrumbs');
+/* --- Breadcrumb --- */
+const crumb = document.getElementById("breadcrumbs");
 const updateCrumb = () => {
-  if (!selectedPath.length) { crumb.textContent = 'root'; return; }
-  let txt = 'root', n = { children: data };
-  selectedPath.forEach(i => { n = n.children[i]; txt += ' / ' + (n.name || 'item'); });
+  if (!selectedPath.length) {
+    crumb.textContent = "root";
+    return;
+  }
+  let txt = "root",
+    n = { children: data };
+  selectedPath.forEach((i) => {
+    n = n.children[i];
+    txt += " / " + (n.name || "item");
+  });
   crumb.textContent = txt;
 };
 
-/* ---------- PREVIEW ---------- */
-const preview = document.getElementById('preview');
-const showVideo = v => {
+/* --- Preview --- */
+const preview = document.getElementById("preview");
+const showVideo = (v) => {
   const id = ytId(v.url);
   preview.innerHTML = id
     ? `<div class="single-video"><iframe src="https://www.youtube.com/embed/${id}" allowfullscreen></iframe></div>`
     : '<p class="placeholder">Invalid URL</p>';
   preview.scrollTop = 0;
 };
-const showFolder = f => {
-  const vids = f.children.filter(c => c.type === 'video');
-  if (!vids.length) { preview.innerHTML = '<p class="placeholder">No videos in this folder.</p>'; return; }
+const showFolder = (f) => {
+  const vids = f.children.filter((c) => c.type === "video");
+  if (!vids.length) {
+    preview.innerHTML =
+      '<p class="placeholder">No videos in this folder.</p>';
+    return;
+  }
   preview.innerHTML =
-    `<div class='playlist-container'><div class='playlist-list'></div><div class='playlist-player'><iframe allowfullscreen></iframe></div></div>`;
-  const list = preview.querySelector('.playlist-list');
-  const player = preview.querySelector('iframe');
-  const play = i => {
+    "<div class='playlist-container'><div class='playlist-list'></div><div class='playlist-player'><iframe allowfullscreen></iframe></div></div>";
+  const list = preview.querySelector(".playlist-list");
+  const player = preview.querySelector("iframe");
+  const play = (i) => {
     player.src = `https://www.youtube.com/embed/${ytId(vids[i].url)}`;
-    list.querySelectorAll('.playlist-item').forEach((el, j) => el.classList.toggle('active', j === i));
+    list
+      .querySelectorAll(".playlist-item")
+      .forEach((el, j) => el.classList.toggle("active", j === i));
     preview.scrollTop = 0;
   };
   vids.forEach((v, i) => {
     const id = ytId(v.url);
-    const item = document.createElement('div');
-    item.className = 'playlist-item';
-    item.innerHTML = `<img src='https://img.youtube.com/vi/${id}/mqdefault.jpg'><span>${v.name || 'Video ' + (i + 1)}</span>`;
+    const item = document.createElement("div");
+    item.className = "playlist-item";
+    item.innerHTML = `<img src='https://img.youtube.com/vi/${id}/mqdefault.jpg'><span>${
+      v.name || "Video " + (i + 1)
+    }</span>`;
     item.onclick = () => play(i);
     list.appendChild(item);
   });
   play(0);
 };
 const updatePreview = () => {
-  preview.innerHTML = '';
+  preview.innerHTML = "";
   if (!selectedPath.length) return;
   const n = getNode(selectedPath);
-  n.type === 'folder' ? showFolder(n) : showVideo(n);
+  n.type === "folder" ? showFolder(n) : showVideo(n);
 };
 
-/* ---------- BUTTONS ---------- */
+/* --- Buttons --- */
 const updateButtons = () => {
-  const g = id => document.getElementById(id);
-  g('deleteBtn').disabled = !selectedPath.length;
-  g('undoBtn').disabled   = !undoStack.length;
-  if (!selectedPath.length) { g('upBtn').disabled = g('downBtn').disabled = true; return; }
-  const idx = selectedPath[selectedPath.length - 1];
-  const cont = (selectedPath.length === 1) ? data : getNode(selectedPath.slice(0, -1)).children;
-  g('upBtn').disabled   = idx === 0;
-  g('downBtn').disabled = idx === cont.length - 1;
-};
-
-/* ---------- CRUD & SEARCH ---------- */
-const nameInput = document.getElementById('itemName');
-document.getElementById('addBtn').onclick = () => {
-  const raw = nameInput.value.trim(); if (!raw) return;
-  const type = document.getElementById('itemType').value;
-  const target = (document.getElementById('addToRoot').checked || !selectedPath.length)
-                   ? data
-                   : (getNode(selectedPath).children ||= []);
-  if (type === 'folder') {
-    target.push({ name: raw, type: 'folder', collapsed: false, children: [] });
-  } else {
-    const url = raw.startsWith('http') ? raw : `https://youtu.be/${raw}`;
-    target.push({ url, type: 'video', name: raw.startsWith('http') ? `Video ${target.filter(x => x.type === 'video').length + 1}` : raw });
+  const g = (id) => document.getElementById(id);
+  g("deleteBtn").disabled = !selectedPath.length;
+  g("undoBtn").disabled = !undoStack.length;
+  if (!selectedPath.length) {
+    g("upBtn").disabled = g("downBtn").disabled = true;
+    return;
   }
-  nameInput.value = ''; filter = ''; saveLocal(); pushLater(); updateUI();
+  const idx =
+    selectedPath[selectedPath.length - 1];
+  const arr =
+    selectedPath.length === 1
+      ? data
+      : getNode(selectedPath.slice(0, -1)).children;
+  g("upBtn").disabled = idx === 0;
+  g("downBtn").disabled = idx === arr.length - 1;
 };
 
-document.getElementById('deleteBtn').onclick = () => {
+/* --- CRUD & Search --- */
+const nameInput = document.getElementById("itemName");
+document.getElementById("addBtn").onclick = () => {
+  const raw = nameInput.value.trim();
+  if (!raw) return;
+  const type = document.getElementById("itemType").value;
+  const target =
+    document.getElementById("addToRoot").checked || !selectedPath.length
+      ? data
+      : (getNode(selectedPath).children ||= []);
+  if (type === "folder")
+    target.push({
+      name: raw,
+      type: "folder",
+      collapsed: false,
+      children: [],
+    });
+  else {
+    const url = raw.startsWith("http") ? raw : `https://youtu.be/${raw}`;
+    target.push({
+      url,
+      type: "video",
+      name: raw.startsWith("http")
+        ? `Video ${target.filter((x) => x.type === "video").length + 1}`
+        : raw,
+    });
+  }
+  nameInput.value = "";
+  filter = "";
+  saveLocal();
+  pushLater();
+  updateUI();
+};
+
+document.getElementById("deleteBtn").onclick = () => {
   if (!selectedPath.length) return;
   const node = getNode(selectedPath);
-  if (!confirm(`Delete \"${node.name || 'item'}\"?`)) return;
+  if (!confirm(`Delete \"${node.name || "item"}\"?`)) return;
   const parentPath = selectedPath.slice(0, -1);
-  const cont = parentPath.length ? getNode(parentPath).children : data;
+  const arr = parentPath.length ? getNode(parentPath).children : data;
   const idx = selectedPath[selectedPath.length - 1];
   pushUndo(node, parentPath, idx);
-  cont.splice(idx, 1);
+  arr.splice(idx, 1);
   selectedPath = [];
-  saveLocal(); pushLater(); updateUI();
+  saveLocal();
+  pushLater();
+  updateUI();
 };
 
-document.getElementById('undoBtn').onclick  = undo;
-document.getElementById('upBtn').onclick    = () => move(-1);
-document.getElementById('downBtn').onclick  = () => move(1);
+document.getElementById("undoBtn").onclick = undo;
+document.getElementById("upBtn").onclick = () => move(-1);
+document.getElementById("downBtn").onclick = () => move(1);
 
-document.getElementById('searchBtn').onclick = () => { filter = nameInput.value.trim().toLowerCase(); selectedPath = []; updateUI(); };
-document.getElementById('clearBtn').onclick  = () => { filter = ''; nameInput.value = ''; selectedPath = []; updateUI(); };
+document.getElementById("searchBtn").onclick = () => {
+  filter = nameInput.value.trim().toLowerCase();
+  selectedPath = [];
+  updateUI();
+};
+document.getElementById("clearBtn").onclick = () => {
+  filter = "";
+  nameInput.value = "";
+  selectedPath = [];
+  updateUI();
+};
 
-/* ---------- UI REFRESH ---------- */
-function updateUI () { updateCrumb(); renderTree(); updatePreview(); updateButtons(); }
+/* --- Full UI refresh --- */
+function updateUI () {
+  updateCrumb();
+  renderTree();
+  updatePreview();
+  updateButtons();
+}
 
-/* ---------- INIT ---------- */
+/* --- INIT --- */
 (async () => {
-  await ensureToken();      // ask once
-  await fetchRemote();      // seed data from cloud (if any)
-  updateUI();               // draw UI
+  await ensureToken();   // ask once
+  await fetchRemote();   // preload from GitHub if possible
+  updateUI();            // render
 })();
 </script>
