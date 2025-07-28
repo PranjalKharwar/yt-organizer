@@ -7,6 +7,17 @@
 <title>YouTube Organizer – Cloud Sync</title>
 
 <!-- ▾‑‑‑‑‑‑‑‑‑‑‑‑ THE SAME CSS AS index.html (unchanged) ‑‑‑‑‑‑‑‑‑‑‑‑ -->
+  /* inside your existing <style> … */
+@media (max-width: 640px) {
+  #sidebar      { width: 100%; height: 44vh; border-right: none; border-bottom:1px solid var(--muted); }
+  #main         { padding-top: .5rem; }
+  .toolbar      { flex-wrap: wrap; }
+  .toolbar .pill,
+  .toolbar select,
+  .toolbar button { flex: 1 1 45%; margin-top:.3rem; }
+  iframe        { max-width: 100%; }
+}
+
 <style>
 /* … put your entire existing style block here … */
 </style>
